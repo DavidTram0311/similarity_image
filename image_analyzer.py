@@ -4,9 +4,14 @@ from pathlib import Path
 from typing import Tuple, Union, Optional, Dict
 from scipy.spatial import KDTree
 from webcolors import CSS3_NAMES_TO_HEX, hex_to_rgb
-from skimage.metrics import structural_similarity as ssim
 import concurrent.futures
 from functools import lru_cache
+import numpy as np 
+from PIL import Image
+from tensorflow.keras.preprocessing import image as image_processing
+from keras.applications.vgg16 import VGG16
+from sklearn.metrics.pairwise import cosine_similarity
+import os
 
 class ImageAnalyzer:
     """
@@ -15,13 +20,9 @@ class ImageAnalyzer:
     - Comparing similarity between input and reference images
     - Real-time processing with high accuracy
     
-    The class assumes that input and reference images:
-    - Have the same dimensions
-    - Primarily contain two colors (white and another dominant color)
-    - Require 100% accuracy in comparison
     """
     
-    def __init__(self, min_similarity: float = 0.95, image_ref1: Union[str, Path] = '', image_ref2: Union[str, Path] = ''):
+    def __init__(self, image_ref1: Union[str, Path] = '', image_ref2: Union[str, Path] = ''):
         """
         Initialize the ImageAnalyzer with configuration parameters.
         
@@ -29,9 +30,14 @@ class ImageAnalyzer:
             min_similarity (float): Minimum similarity threshold (0-1).
                                   Default is 0.95 for high accuracy requirements.
         """
-        self.min_similarity = min_similarity
         self.image_ref1 = image_ref1
         self.image_ref2 = image_ref2
+        vgg16 = VGG16(weights='imagenet', include_top=False, 
+              pooling='max', input_shape=(32, 32, 3))
+        self.model = vgg16
+        for model_layer in self.model.layers:
+            model_layer.trainable = False
+
         # Khởi tạo color mapping cho việc chuyển đổi RGB sang tên màu
         self._initialize_color_mapping()
         # Định nghĩa ngưỡng cho pixel trắng trong không gian HSV
@@ -95,74 +101,7 @@ class ImageAnalyzer:
         color_name = self._get_color_name(tuple(rgb_color))
         
         return dominant_color[0], color_name
-    
-    def _parallel_histogram_comparison(self,
-                                    hsv1: np.ndarray,
-                                    hsv2: np.ndarray,
-                                    channel: int,
-                                    bins: int = 32) -> float:
-        """
-        So sánh histogram cho một kênh màu.
-        
-        Args:
-            hsv1, hsv2: Ảnh HSV
-            channel: Kênh màu (0=H, 1=S, 2=V)
-            bins: Số lượng bins
-            
-        Returns:
-            float: Điểm tương đồng histogram
-        """
-        hist1 = cv2.calcHist([hsv1], [channel], None, [bins], [0, 256])
-        hist2 = cv2.calcHist([hsv2], [channel], None, [bins], [0, 256])
-        
-        cv2.normalize(hist1, hist1, 0, 1, cv2.NORM_MINMAX)
-        cv2.normalize(hist2, hist2, 0, 1, cv2.NORM_MINMAX)
-        
-        return cv2.compareHist(hist1, hist2, cv2.HISTCMP_CORREL)
-    
-    def _compare_color_histograms(self,
-                                img1: np.ndarray,
-                                img2: np.ndarray,
-                                bins: int = 32) -> float:
-        """
-        So sánh histogram màu song song.
-        """
-        hsv1 = cv2.cvtColor(img1, cv2.COLOR_BGR2HSV)
-        hsv2 = cv2.cvtColor(img2, cv2.COLOR_BGR2HSV)
-        
-        with concurrent.futures.ThreadPoolExecutor() as executor:
-            futures = []
-            for channel in range(3):
-                future = executor.submit(
-                    self._parallel_histogram_comparison,
-                    hsv1, hsv2, channel, bins
-                )
-                futures.append(future)
-                
-            hist_scores = [future.result() for future in futures]
-            
-        return np.mean(hist_scores)
-    
-    @staticmethod
-    def resize_if_needed(image: np.ndarray, 
-                        max_dimension: int = 800) -> np.ndarray:
-        """
-        Resize ảnh nếu kích thước quá lớn.
-        
-        Args:
-            image: Ảnh input
-            max_dimension: Kích thước tối đa cho phép
-            
-        Returns:
-            np.ndarray: Ảnh đã resize nếu cần
-        """
-        height, width = image.shape[:2]
-        if max(height, width) > max_dimension:
-            scale = max_dimension / max(height, width)
-            new_width = int(width * scale)
-            new_height = int(height * scale)
-            return cv2.resize(image, (new_width, new_height))
-        return image
+
 
     # Fix the color mapping initialization
     def _initialize_color_mapping(self) -> None:
@@ -209,46 +148,23 @@ class ImageAnalyzer:
         h, s, v = pixel
         return s <= self.white_threshold['saturation_max'] and v >= self.white_threshold['value_min']
     
-    def _compare_contours(self,
-                         gray1: np.ndarray,
-                         gray2: np.ndarray,
-                         threshold: int = 127) -> float:
+    def get_image_embeddings(self, object_image : image_processing):
+    
         """
-        So sánh hình dạng đối tượng sử dụng contours.
-        
-        Args:
-            gray1, gray2: Ảnh grayscale
-            threshold: Ngưỡng nhị phân hóa
-            
-        Returns:
-            float: Điểm tương đồng contour (0-1)
+        -----------------------------------------------------
+        convert image into 3d array and add additional dimension for model input
+        -----------------------------------------------------
+        return embeddings of the given image
         """
-        # Nhị phân hóa ảnh
-        _, bin1 = cv2.threshold(gray1, threshold, 255, cv2.THRESH_BINARY)
-        _, bin2 = cv2.threshold(gray2, threshold, 255, cv2.THRESH_BINARY)
-        
-        # Tìm contours
-        contours1, _ = cv2.findContours(bin1, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        contours2, _ = cv2.findContours(bin2, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        
-        if not contours1 or not contours2:
-            return 0.0
-            
-        # Lấy contour lớn nhất
-        c1 = max(contours1, key=cv2.contourArea)
-        c2 = max(contours2, key=cv2.contourArea)
-        
-        # So sánh hình dạng
-        match_score = cv2.matchShapes(c1, c2, cv2.CONTOURS_MATCH_I2, 0.0)
-        
-        # Chuyển điểm sang thang 0-1
-        similarity = 1.0 / (1.0 + match_score)
-        
-        return similarity
+
+        image_array = np.expand_dims(image_processing.img_to_array(object_image), axis = 0)
+        image_embedding = self.model.predict(image_array)
+
+        return image_embedding
     
     def compare_images(self, 
-                      input_image: np.ndarray, 
-                      reference_image: np.ndarray
+                      input_image: Union[str, Path],
+                      reference_image: Union[str, Path]
                      ) -> float:
         """
         So sánh hai ảnh sử dụng nhiều phương pháp để đạt độ chính xác cao nhất.
@@ -262,35 +178,17 @@ class ImageAnalyzer:
         """
         # Validate kích thước ảnh
         # self._validate_images_size(input_image, reference_image)
-        input_image = cv2.resize(input_image, (reference_image.shape[1], reference_image.shape[0]))
+
+        input_image = Image.open(input_image).resize((32, 32))
+        ref_image = Image.open(reference_image).resize((32, 32))
         
         # Chuyển ảnh sang grayscale cho việc so sánh cấu trúc
-        gray1 = cv2.cvtColor(input_image, cv2.COLOR_BGR2GRAY)
-        gray2 = cv2.cvtColor(reference_image, cv2.COLOR_BGR2GRAY)
+        first_image_vector = self.get_image_embeddings(input_image)
+        second_image_vector = self.get_image_embeddings(ref_image)
         
-        # 1. Tính toán điểm SSIM
-        ssim_score, _ = ssim(gray1, gray2, full=True)
+        similarity_score = cosine_similarity(first_image_vector, second_image_vector).reshape(1,)
         
-        # 2. So sánh histogram màu
-        hist_score = self._compare_color_histograms(input_image, reference_image)
-        
-        # 3. So sánh contour
-        contour_score = self._compare_contours(gray1, gray2)
-        
-        # Tính điểm tổng hợp (có thể điều chỉnh trọng số)
-        weights = {
-            'ssim': 0.4,
-            'histogram': 0.3,
-            'contour': 0.3
-        }
-        
-        final_score = (
-            ssim_score * weights['ssim'] +
-            hist_score * weights['histogram'] +
-            contour_score * weights['contour']
-        )
-        
-        return final_score
+        return similarity_score
 
     def _validate_image_path(self, image_path: Union[str, Path]) -> bool:
         """
@@ -318,6 +216,92 @@ class ImageAnalyzer:
             )
             
         return True
+    
+    def debug_circle_detection(self, image_path: Union[str, Path]) -> bool:
+        # 1. Load and show original
+        image = cv2.imread(image_path)
+        # original = image.copy()
+        
+        # 2. Improved preprocessing
+        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        # Increase blur kernel for noise reduction
+        blurred = cv2.GaussianBlur(gray, (9, 9), 2)
+        
+        # 3. Try different HoughCircles parameters
+        circles = cv2.HoughCircles(
+            blurred,
+            cv2.HOUGH_GRADIENT,
+            dp=1,           # Resolution ratio
+            minDist=35,     # Minimum distance between circles
+            param1=50,      # Upper threshold for edge detection
+            param2=20,      # Threshold for center detection (lower = more false circles)
+            minRadius=10,   # Minimum radius to detect
+            maxRadius=200   # Maximum radius to detect
+        )
+        
+        # 6. Show results
+        if circles is not None:
+            circles = np.uint16(np.around(circles))
+            for i in circles[0, :]:
+                center = (i[0], i[1])
+                radius = i[2]
+                cv2.circle(image, center, radius, (0, 255, 0), 2)
+                cv2.circle(image, center, 2, (0, 0, 255), 3)
+            
+            # plt.figure(figsize=(8,8))
+            # plt.imshow(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
+            # plt.title(f'Detected {len(circles[0])} circles')
+            # plt.show()
+            return circles
+        else:
+            print("No circles found")
+            return None
+    
+    def crop_detected_circles(self, image_path: Union[str, Path]):
+        # Create output directory
+        os.makedirs("detected_circles", exist_ok=True)
+        
+        # Get circles using existing detection
+        image = cv2.imread(image_path)
+        circles = self.debug_circle_detection(image_path)
+        
+        if circles is not None:
+            for idx, circle in enumerate(circles[0, :]):
+                # Get circle parameters
+                x, y, r = circle
+                
+                # Create transparent background
+                mask = np.zeros((2*r, 2*r, 4), dtype=np.uint8)
+                
+                # Draw circle on mask
+                cv2.circle(mask, (r, r), r, (255, 255, 255, 255), -1)
+                
+                # Extract circle region from original
+                x1, y1 = max(x-r, 0), max(y-r, 0)
+                x2, y2 = min(x+r, image.shape[1]), min(y+r, image.shape[0])
+                
+                # Crop circle
+                cropped = image[y1:y2, x1:x2]
+                
+                # Resize cropped to match mask if needed
+                if cropped.shape[0] != 2*r or cropped.shape[1] != 2*r:
+                    cropped = cv2.resize(cropped, (2*r, 2*r))
+                
+                # Add alpha channel
+                result = cv2.cvtColor(cropped, cv2.COLOR_BGR2BGRA)
+                result[:, :, 3] = mask[:, :, 3]
+
+                # Save circle
+                output_path = os.path.join("detected_circles", f'circle_{idx}.jpg')
+                cv2.imwrite(output_path, result)
+                print(f"Saved circle {idx} to {output_path}")
+
+            # result_3ch = cv2.cvtColor(result, cv2.COLOR_BGRA2BGR)
+            return output_path
+
+        else:
+            # convert cv2 to PIL
+            return image_path
         
     def _load_image(self, image_path: Union[str, Path]) -> np.ndarray:
         """
@@ -339,43 +323,6 @@ class ImageAnalyzer:
             raise ValueError(f"Failed to load image: {image_path}")
             
         return image
-        
-    def _validate_images_size(self, image1: np.ndarray, image2: np.ndarray) -> bool:
-        """
-        Validate if two images have the same dimensions.
-        
-        Args:
-            image1: First image array
-            image2: Second image array
-            
-        Returns:
-            bool: True if images have same dimensions
-            
-        Raises:
-            ValueError: If images have different dimensions
-        """
-        if image1.shape != image2.shape:
-            raise ValueError(
-                f"Images have different dimensions: "
-                f"{image1.shape} vs {image2.shape}"
-            )
-        return True
-
-    def extract_basic_color(dominant_color_name: str) -> str:
-        """
-        Extract the basic color name from the dominant color name.
-        
-        Args:
-            dominant_color_name: Dominant color name
-            
-        Returns:
-            str: Basic color name
-        """
-        basic_colors = ["red", "blue", "green", "yellow", "orange", "purple", "pink", "brown", "black", "white", "gray"]
-        for color in basic_colors:
-            if color in dominant_color_name:
-                return color
-        return dominant_color_name
 
     def process(self, 
                 input_path: Union[str, Path], 
@@ -393,6 +340,7 @@ class ImageAnalyzer:
             input_image = future_input.result()
             reference_image1 = future_reference1.result()
             reference_image2 = future_reference2.result()
+
             
             # Xử lý song song màu chủ đạo và so sánh ảnh
             future_input_color = executor.submit(self.get_dominant_color, input_image)
@@ -407,6 +355,15 @@ class ImageAnalyzer:
             print(f"Reference image 1 dominant color: {dominant_ref1_color_name}")
             print(f"Reference image 2 dominant color: {dominant_ref2_color_name}")
 
+            if dominant_input_color_name == "tomato":
+                dominant_input_color_name = "red"
+
+            if dominant_ref1_color_name == "tomato":
+                dominant_ref1_color_name = "red"
+            
+            if dominant_ref2_color_name == "tomato":
+                dominant_ref2_color_name = "red"
+
             basic_colors = ["red", "blue", "green", "yellow", "orange", "purple", "pink", "brown", "black", "white", "gray"]
             for color in basic_colors:
                 if color in dominant_input_color_name:
@@ -417,15 +374,17 @@ class ImageAnalyzer:
                     dominant_ref2_color_name = color
 
             if dominant_input_color_name == dominant_ref1_color_name:
-                reference_image = reference_image1
+                reference_image = self.image_ref1
             elif dominant_input_color_name == dominant_ref2_color_name:
-                reference_image = reference_image2
+                reference_image = self.image_ref2
             else:
                 raise ValueError("Input image color does not match any reference image color")
             
 
+            input_path = self.crop_detected_circles(input_path)
+
             future_similarity = executor.submit(
-                self.compare_images, input_image, reference_image
+                self.compare_images, input_path, reference_image
             )
             
             similarity = future_similarity.result()
