@@ -188,7 +188,7 @@ class ImageAnalyzer:
         
         similarity_score = cosine_similarity(first_image_vector, second_image_vector).reshape(1,)
         
-        return similarity_score
+        return similarity_score[0]
 
     def _validate_image_path(self, image_path: Union[str, Path]) -> bool:
         """
