@@ -216,92 +216,6 @@ class ImageAnalyzer:
             )
             
         return True
-    
-    def debug_circle_detection(self, image_path: Union[str, Path]) -> bool:
-        # 1. Load and show original
-        image = cv2.imread(image_path)
-        # original = image.copy()
-        
-        # 2. Improved preprocessing
-        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-        # Increase blur kernel for noise reduction
-        blurred = cv2.GaussianBlur(gray, (9, 9), 2)
-        
-        # 3. Try different HoughCircles parameters
-        circles = cv2.HoughCircles(
-            blurred,
-            cv2.HOUGH_GRADIENT,
-            dp=1,           # Resolution ratio
-            minDist=35,     # Minimum distance between circles
-            param1=50,      # Upper threshold for edge detection
-            param2=20,      # Threshold for center detection (lower = more false circles)
-            minRadius=10,   # Minimum radius to detect
-            maxRadius=200   # Maximum radius to detect
-        )
-        
-        # 6. Show results
-        if circles is not None:
-            circles = np.uint16(np.around(circles))
-            for i in circles[0, :]:
-                center = (i[0], i[1])
-                radius = i[2]
-                cv2.circle(image, center, radius, (0, 255, 0), 2)
-                cv2.circle(image, center, 2, (0, 0, 255), 3)
-            
-            # plt.figure(figsize=(8,8))
-            # plt.imshow(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
-            # plt.title(f'Detected {len(circles[0])} circles')
-            # plt.show()
-            return circles
-        else:
-            print("No circles found")
-            return None
-    
-    def crop_detected_circles(self, image_path: Union[str, Path]):
-        # Create output directory
-        os.makedirs("detected_circles", exist_ok=True)
-        
-        # Get circles using existing detection
-        image = cv2.imread(image_path)
-        circles = self.debug_circle_detection(image_path)
-        
-        if circles is not None:
-            for idx, circle in enumerate(circles[0, :]):
-                # Get circle parameters
-                x, y, r = circle
-                
-                # Create transparent background
-                mask = np.zeros((2*r, 2*r, 4), dtype=np.uint8)
-                
-                # Draw circle on mask
-                cv2.circle(mask, (r, r), r, (255, 255, 255, 255), -1)
-                
-                # Extract circle region from original
-                x1, y1 = max(x-r, 0), max(y-r, 0)
-                x2, y2 = min(x+r, image.shape[1]), min(y+r, image.shape[0])
-                
-                # Crop circle
-                cropped = image[y1:y2, x1:x2]
-                
-                # Resize cropped to match mask if needed
-                if cropped.shape[0] != 2*r or cropped.shape[1] != 2*r:
-                    cropped = cv2.resize(cropped, (2*r, 2*r))
-                
-                # Add alpha channel
-                result = cv2.cvtColor(cropped, cv2.COLOR_BGR2BGRA)
-                result[:, :, 3] = mask[:, :, 3]
-
-                # Save circle
-                output_path = os.path.join("detected_circles", f'circle_{idx}.jpg')
-                cv2.imwrite(output_path, result)
-                print(f"Saved circle {idx} to {output_path}")
-
-            # result_3ch = cv2.cvtColor(result, cv2.COLOR_BGRA2BGR)
-            return output_path
-
-        else:
-            # convert cv2 to PIL
-            return image_path
         
     def _load_image(self, image_path: Union[str, Path]) -> np.ndarray:
         """
@@ -379,9 +293,7 @@ class ImageAnalyzer:
                 reference_image = self.image_ref2
             else:
                 raise ValueError("Input image color does not match any reference image color")
-            
 
-            input_path = self.crop_detected_circles(input_path)
 
             future_similarity = executor.submit(
                 self.compare_images, input_path, reference_image
