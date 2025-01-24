@@ -122,18 +122,6 @@ class ImageAnalyzer:
         # Create KDTree for nearest color lookup
         self.color_tree = KDTree(rgb_colors)
         
-    def _get_color_name(self, rgb_color: Tuple[int, int, int]) -> str:
-        """
-        Chuyển đổi giá trị RGB sang tên màu gần nhất.
-        
-        Args:
-            rgb_color: Tuple RGB (r, g, b)
-            
-        Returns:
-            str: Tên màu tiếng Anh
-        """
-        distance, index = self.color_tree.query(rgb_color)
-        return self.color_names[index]
     
     def _is_white_pixel(self, pixel: np.ndarray) -> bool:
         """
@@ -239,9 +227,15 @@ class ImageAnalyzer:
             
         return image
     
-    def normalize_color(self, color_name, color_group, target_color):
-        return target_color if color_name in color_group else color_name
-    
+    def normalize_color(self, color_name, color_group_red, color_group_blue):
+        if "red" in color_name:
+            return "red"
+        elif "blue" in color_name:
+            return "blue"
+        elif color_name in color_group_red:
+            return "red"
+        elif color_name in color_group_blue:
+            return "blue"
 
     def booling_cursor(self, image_path: Union[str, Path], margin_size):
         """
@@ -276,11 +270,7 @@ class ImageAnalyzer:
             
             future_input_color = executor.submit(self.get_dominant_color, cropped)
             _, dominant_input_color_name = future_input_color.result()
-            print(f"Input image dominant color: {dominant_input_color_name}")
-            dominant_input_color_name = self.normalize_color(dominant_input_color_name, RED, "red")
-            dominant_input_color_name = self.normalize_color(dominant_input_color_name, BLUE, "blue")
-            print(f"Input image dominant color: {dominant_input_color_name}")
-            print(f"Image path: {image_path}")
+            dominant_input_color_name = self.normalize_color(dominant_input_color_name, RED, BLUE)
             if dominant_input_color_name == "red":
                 return int(0)
             else:

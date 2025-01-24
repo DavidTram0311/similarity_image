@@ -7,7 +7,7 @@ Blue: 1
 # Initialize with reference images
 analyzer = ImageAnalyzer()
 
-crop = analyzer.booling_cursor(image_path='images/red_diff_input.png', margin_size = 10)
+crop = analyzer.booling_cursor(image_path='images/a1.png', margin_size = 5)
 print(crop)
 
 
