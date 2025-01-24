@@ -12,6 +12,7 @@ from tensorflow.keras.preprocessing import image as image_processing
 from keras.applications.vgg16 import VGG16
 from sklearn.metrics.pairwise import cosine_similarity
 import os
+from color_shade import RED, BLUE
 
 class ImageAnalyzer:
     """
@@ -179,8 +180,8 @@ class ImageAnalyzer:
         # Validate kích thước ảnh
         # self._validate_images_size(input_image, reference_image)
 
-        input_image = Image.open(input_image).resize((32, 32))
-        ref_image = Image.open(reference_image).resize((32, 32))
+        input_image = Image.open(input_image).convert("RGB").resize((32, 32))
+        ref_image = Image.open(reference_image).convert("RGB").resize((32, 32))
         
         # Chuyển ảnh sang grayscale cho việc so sánh cấu trúc
         first_image_vector = self.get_image_embeddings(input_image)
@@ -237,6 +238,54 @@ class ImageAnalyzer:
             raise ValueError(f"Failed to load image: {image_path}")
             
         return image
+    
+    def normalize_color(self, color_name, color_group, target_color):
+        return target_color if color_name in color_group else color_name
+    
+
+    def booling_cursor(self, image_path: Union[str, Path], margin_size):
+        """
+        Crop equal margins from all edges of the image
+        
+        Args:
+            image: numpy array or PIL Image
+            margin_size: number of pixels to crop from each edge
+            
+        Returns:
+            Cropped image as numpy array
+        """
+        with concurrent.futures.ThreadPoolExecutor() as executor:
+            # Đọc ảnh song song
+            future_input = executor.submit(self._load_image, image_path)
+            image = future_input.result()
+            
+            # Input validation
+            if margin_size < 0:
+                raise ValueError("Margin size must be positive")
+            if margin_size * 2 >= min(image.shape[0], image.shape[1]):
+                raise ValueError("Margin size too large for image dimensions")
+                
+            # Calculate new dimensions
+            height, width = image.shape[:2]
+            new_height = height - (2 * margin_size)
+            new_width = width - (2 * margin_size)
+            
+            # Crop image using array slicing
+            cropped = image[margin_size:height-margin_size, 
+                        margin_size:width-margin_size]
+            
+            future_input_color = executor.submit(self.get_dominant_color, cropped)
+            _, dominant_input_color_name = future_input_color.result()
+            print(f"Input image dominant color: {dominant_input_color_name}")
+            dominant_input_color_name = self.normalize_color(dominant_input_color_name, RED, "red")
+            dominant_input_color_name = self.normalize_color(dominant_input_color_name, BLUE, "blue")
+            print(f"Input image dominant color: {dominant_input_color_name}")
+            print(f"Image path: {image_path}")
+            if dominant_input_color_name == "red":
+                return int(0)
+            else:
+                return int(1)
+
 
     def process(self, 
                 input_path: Union[str, Path], 
@@ -269,14 +318,13 @@ class ImageAnalyzer:
             print(f"Reference image 1 dominant color: {dominant_ref1_color_name}")
             print(f"Reference image 2 dominant color: {dominant_ref2_color_name}")
 
-            if dominant_input_color_name == "tomato":
-                dominant_input_color_name = "red"
+            dominant_input_color_name = self.normalize_color(dominant_input_color_name, RED, "red")
+            dominant_ref1_color_name = self.normalize_color(dominant_ref1_color_name, RED, "red")
+            dominant_ref2_color_name = self.normalize_color(dominant_ref2_color_name, RED, "red")
 
-            if dominant_ref1_color_name == "tomato":
-                dominant_ref1_color_name = "red"
-            
-            if dominant_ref2_color_name == "tomato":
-                dominant_ref2_color_name = "red"
+            dominant_input_color_name = self.normalize_color(dominant_input_color_name, BLUE, "blue")
+            dominant_ref1_color_name = self.normalize_color(dominant_ref1_color_name, BLUE, "blue")
+            dominant_ref2_color_name = self.normalize_color(dominant_ref2_color_name, BLUE, "blue")
 
             basic_colors = ["red", "blue", "green", "yellow", "orange", "purple", "pink", "brown", "black", "white", "gray"]
             for color in basic_colors:

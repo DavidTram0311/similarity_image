@@ -7,6 +7,6 @@ analyzer = ImageAnalyzer(
 )
 
 # Process an input image
-color_name, similarity = analyzer.process('images/cropped_mouse_screenshot1.png')
+color_name, similarity = analyzer.process('images/red_input.png')
 print(f"Dominant color: {color_name}")
 print(f"Similarity score: {str(similarity)}%")
