@@ -122,6 +122,18 @@ class ImageAnalyzer:
         # Create KDTree for nearest color lookup
         self.color_tree = KDTree(rgb_colors)
         
+    def _get_color_name(self, rgb_color: Tuple[int, int, int]) -> str:
+        """
+        Chuyển đổi giá trị RGB sang tên màu gần nhất.
+        
+        Args:
+            rgb_color: Tuple RGB (r, g, b)
+            
+        Returns:
+            str: Tên màu tiếng Anh
+        """
+        distance, index = self.color_tree.query(rgb_color)
+        return self.color_names[index]
     
     def _is_white_pixel(self, pixel: np.ndarray) -> bool:
         """
