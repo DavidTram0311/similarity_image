@@ -239,17 +239,11 @@ class ImageAnalyzer:
             
         return image
     
-    def normalize_color(self, color_name, color_group_red, color_group_blue):
-        if "red" in color_name:
-            return "red"
-        elif "blue" in color_name:
-            return "blue"
-        elif color_name in color_group_red:
-            return "red"
-        elif color_name in color_group_blue:
-            return "blue"
+    def normalize_color(self, color_name, color_group, target_color):
+        return target_color if color_name in color_group else color_name
+    
 
-    def booling_cursor(self, image_path: Union[str, Path], margin_size):
+    def crop_margins(self, image_path, margin_size):
         """
         Crop equal margins from all edges of the image
         
@@ -260,33 +254,42 @@ class ImageAnalyzer:
         Returns:
             Cropped image as numpy array
         """
-        with concurrent.futures.ThreadPoolExecutor() as executor:
-            # Đọc ảnh song song
-            future_input = executor.submit(self._load_image, image_path)
-            image = future_input.result()
+        # Convert PIL Image to numpy array if needed
+        image = Image.open(image_path)
+        if isinstance(image, Image.Image):
+            image = np.array(image)
             
-            # Input validation
-            if margin_size < 0:
-                raise ValueError("Margin size must be positive")
-            if margin_size * 2 >= min(image.shape[0], image.shape[1]):
-                raise ValueError("Margin size too large for image dimensions")
-                
-            # Calculate new dimensions
-            height, width = image.shape[:2]
-            new_height = height - (2 * margin_size)
-            new_width = width - (2 * margin_size)
+        # Input validation
+        if margin_size < 0:
+            raise ValueError("Margin size must be positive")
+        if margin_size * 2 >= min(image.shape[0], image.shape[1]):
+            raise ValueError("Margin size too large for image dimensions")
             
-            # Crop image using array slicing
-            cropped = image[margin_size:height-margin_size, 
-                        margin_size:width-margin_size]
-            
-            future_input_color = executor.submit(self.get_dominant_color, cropped)
-            _, dominant_input_color_name = future_input_color.result()
-            dominant_input_color_name = self.normalize_color(dominant_input_color_name, RED, BLUE)
-            if dominant_input_color_name == "red":
-                return int(0)
-            else:
-                return int(1)
+        # Calculate new dimensions
+        height, width = image.shape[:2]
+        new_height = height - (2 * margin_size)
+        new_width = width - (2 * margin_size)
+        
+        # Crop image using array slicing
+        cropped = image[margin_size:height-margin_size, 
+                    margin_size:width-margin_size]
+        
+        return cropped
+    
+    def booling_cursor(self, image_path: Union[str, Path], margin_size: int = 2) -> Tuple[str, float]:
+        """
+        Process an input image to detect the dominant color and compare with reference images.
+        
+        Args:
+            image_path: Path to the input image file
+            margin_size: Number of pixels to crop from each edge of the image
+        """
+        # Crop margins from the input image
+        cropped_image = self.crop_margins(image_path, margin_size)
+        
+        # Process the cropped image
+        return self.process(cropped_image)
+          
 
 
     def process(self, 
