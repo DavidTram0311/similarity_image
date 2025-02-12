@@ -9,6 +9,8 @@ import concurrent.futures
 from functools import lru_cache
 from color_shade import RED, BLUE
 import random
+import imagehash
+from PIL import Image
 
 class ImageAnalyzerv2:
     def __init__(self, min_similarity: float = 0.95, cache_size: int = 128, image_ref1: Union[str, Path] = '', image_ref2: Union[str, Path] = ''):
@@ -110,6 +112,24 @@ class ImageAnalyzerv2:
         
         image = cv2.imread(str(image_path))
         image = cv2.resize(image, (32,32))
+        if image is None:
+            raise ValueError(f"Failed to load image: {image_path}")
+            
+        return image
+    def _load_image_big(self, image_path: Union[str, Path]) -> np.ndarray:
+        """
+        Load and validate an image file.
+        
+        Args:
+            image_path: Path to the image file
+            
+        Returns:
+            np.ndarray: Loaded image in BGR format
+        """
+        self._validate_image_path(image_path)
+        
+        image = cv2.imread(str(image_path))
+        image = cv2.resize(image, (255,255))
         if image is None:
             raise ValueError(f"Failed to load image: {image_path}")
             
@@ -248,6 +268,49 @@ class ImageAnalyzerv2:
         )
         
         return final_score
+    
+    def calculate_image_similarity(self, image_path1 = Union[str, Path], image_path2 = Union[str, Path]):
+        """
+        Calculates the similarity between two images using image hashing.
+        Can use either PIL or OpenCV for image loading.  Reads images from local file paths.
+
+        Args:
+            image_path1: Path to the first image file.
+            image_path2: Path to the second image file.
+            use_opencv:  If True, use OpenCV for image loading; otherwise, use PIL.
+
+        Returns:
+            0: if the images are different
+            1: if the images are the same
+        """
+        try:
+            image1 = self._load_image_big(image_path1)
+            image2 = self._load_image_big(image_path2)
+
+            # Convert OpenCV images to PIL (imagehash needs PIL)
+            image1 = Image.fromarray(cv2.cvtColor(image1, cv2.COLOR_BGR2RGB))  # Corrected: Convert BGR to RGB
+            image2 = Image.fromarray(cv2.cvtColor(image2, cv2.COLOR_BGR2RGB))  # Corrected: Convert BGR to RGB
+
+            # Calculate image hashes (using a perceptual hash)
+            hash1 = imagehash.phash(image1)
+            hash2 = imagehash.phash(image2)
+
+            # Calculate the Hamming distance (number of differing bits)
+            hamming_distance = hash1 - hash2
+
+            # Normalize the Hamming distance to get a similarity percentage
+            max_hash_size = hash1.hash.size  # Total number of bits in the hash
+            similarity = 100.0 * (1.0 - (float(hamming_distance) / max_hash_size))
+            if similarity == 100.0:
+                return 1
+            else:
+                return 0
+
+            # return similarity
+
+        except Exception as e:
+            print(f"An error occurred: {e}")
+            return 0.0  # Or some other appropriate error value
 
     def normalize_color(self, color_name, color_group_red, color_group_blue):
         if "red" in color_name:

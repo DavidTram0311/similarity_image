@@ -10,3 +10,9 @@ analyzer = ImageAnalyzerv2(
 color_name, similarity = analyzer.process('images/red_11_2.jpg')
 print(f"Dominant color: {color_name}")
 print(f"Similarity score: {str(similarity)}%")
+
+# Process another input image
+analyzer = ImageAnalyzerv2()
+
+confidences = analyzer.calculate_image_similarity("images/game2.png", "images/game2.2.png")
+print(confidences)
